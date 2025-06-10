@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
     QProgressBar,
     QHBoxLayout,
     QListWidgetItem,
+    QMainWindow,
 )
 from PySide6.QtCore import Qt
 
@@ -19,17 +20,20 @@ from app.clone_worker import CloneWorker
 from app.repo_list_item import RepoListItem
 
 
-class MainWindow(QWidget):
+class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("GitHub Repo Downloader")
         self.setGeometry(100, 100, 800, 600)
         self.token = None
-        self.repos = []
+        self.repos_all = []  # Все загруженные репозитории
+        self.current_page = 1  # Текущая страница
+        self.per_page = 100  # Репозиториев на страницу
         self.selected_repos = []
         self.setup_ui()
         self.load_stylesheet()
         self.clone_workers = []
+        self.repo_worker = None
 
     def load_stylesheet(self):
         try:
@@ -39,44 +43,68 @@ class MainWindow(QWidget):
             print(f"Не удалось загрузить стиль: {e}")
 
     def setup_ui(self):
-        self.layout = QVBoxLayout(self)
+        self.central_widget = QWidget()
+        self.setCentralWidget(self.central_widget)
+        self.layout = QVBoxLayout()
 
+        # Выбор режима поиска
         self.mode_combo = QComboBox()
         self.mode_combo.addItems(["Search by Language", "Search by User"])
         self.layout.addWidget(self.mode_combo)
 
+        # Параметры поиска
         self.param_layout = QVBoxLayout()
-
         self.language_input = QLineEdit(placeholderText="Language (e.g. Python)")
         self.sort_combo = QComboBox()
         self.sort_combo.addItems(["stars", "forks", "updated"])
         self.order_combo = QComboBox()
         self.order_combo.addItems(["desc", "asc"])
-        self.per_page_input = QLineEdit("100")
+        self.per_page_input = QLineEdit("100")  # По умолчанию 100
         self.username_input = QLineEdit(placeholderText="GitHub username")
+
+        # Токен
         self.token_input = QLineEdit(placeholderText="GitHub token (optional)")
         self.token_input.setEchoMode(QLineEdit.Password)
 
+        # Кнопка поиска
         self.search_btn = QPushButton("Search")
         self.search_btn.clicked.connect(self.start_search)
 
+        # Навигация
+        self.prev_btn = QPushButton("Назад")
+        self.next_btn = QPushButton("Вперёд")
+        self.prev_btn.setEnabled(False)
+        self.next_btn.setEnabled(False)
+        self.prev_btn.clicked.connect(self.prev_page)
+        self.next_btn.clicked.connect(self.next_page)
+
+        # Страница и список
+        self.page_label = QLabel()
         self.result_list = QListWidget()
         self.result_list.itemChanged.connect(self.update_selection)
 
+        # Клонирование
         self.clone_btn = QPushButton("Clone Selected")
         self.clone_btn.setEnabled(False)
         self.clone_btn.clicked.connect(self.start_cloning)
 
+        # Прогресс бар
         self.progress_bar = QProgressBar()
         self.progress_bar.setVisible(False)
 
+        # Добавляем всё на форму
         self.layout.addLayout(self.param_layout)
         self.layout.addWidget(self.token_input)
         self.layout.addWidget(self.search_btn)
+        self.layout.addWidget(self.prev_btn)
+        self.layout.addWidget(self.next_btn)
+        self.layout.addWidget(self.page_label)
         self.layout.addWidget(self.result_list)
         self.layout.addWidget(self.clone_btn)
         self.layout.addWidget(self.progress_bar)
+        self.central_widget.setLayout(self.layout)
 
+        # Обновление интерфейса
         self.mode_combo.currentIndexChanged.connect(self.update_params_ui)
         self.update_params_ui()
 
@@ -97,8 +125,16 @@ class MainWindow(QWidget):
             self.param_layout.addWidget(self.username_input)
 
     def start_search(self):
+        if self.repo_worker and self.repo_worker.isRunning():
+            return  # Блокируем повторный запуск
+
         self.token = self.token_input.text() or None
         self.result_list.clear()
+        self.current_page = 1
+
+        self.search_btn.setText("Поиск...")
+        self.search_btn.setEnabled(False)
+
         if self.mode_combo.currentIndex() == 0:
             params = {
                 "language": self.language_input.text() or "Verilog",
@@ -106,24 +142,69 @@ class MainWindow(QWidget):
                 "order": self.order_combo.currentText(),
                 "token": self.token,
             }
-            self.worker = RepoWorker("language", **params)
+            self.repo_worker = RepoWorker("language", **params)
         else:
             params = {"username": self.username_input.text(), "token": self.token}
-            self.worker = RepoWorker("user", **params)
-        self.worker.finished.connect(self.display_repos)
-        self.worker.error.connect(self.show_error)
-        self.worker.start()
+            self.repo_worker = RepoWorker("user", **params)
 
-    def display_repos(self, repos):
-        self.repos = repos
+        def on_finished(repos):
+            self.repos_all = repos
+            self.display_current_page()
+            self.repo_worker = None
+            self.search_btn.setText("Search")
+            self.search_btn.setEnabled(True)
+
+        def on_error(error_msg):
+            self.show_error(error_msg)
+            self.repo_worker = None
+            self.search_btn.setText("Search")
+            self.search_btn.setEnabled(True)
+
+        self.repo_worker.finished.connect(on_finished)
+        self.repo_worker.error.connect(on_error)
+        self.repo_worker.start()
+
+    def on_repos_loaded(self, repos):
+        self.repos_all = repos
+        self.display_current_page()
+        self.clone_btn.setEnabled(True)
+
+    def get_per_page(self):
+        try:
+            return int(self.per_page_input.text())
+        except:
+            return 100
+
+    def display_current_page(self):
         self.result_list.clear()
-        for repo in repos:
+        self.prev_btn.setEnabled(self.current_page > 1)
+
+        per_page = self.get_per_page()
+        start_idx = (self.current_page - 1) * per_page
+        end_idx = start_idx + per_page
+        page_repos = self.repos_all[start_idx:end_idx]
+
+        for repo in page_repos:
             item_widget = RepoListItem(repo)
             list_item = QListWidgetItem()
             list_item.setSizeHint(item_widget.sizeHint())
             self.result_list.addItem(list_item)
             self.result_list.setItemWidget(list_item, item_widget)
-        self.clone_btn.setEnabled(True)
+
+        total_pages = (len(self.repos_all) + per_page - 1) // per_page
+        self.page_label.setText(f"Страница {self.current_page} из {total_pages or 1}")
+        self.next_btn.setEnabled(end_idx < len(self.repos_all))
+
+    def prev_page(self):
+        if self.current_page > 1:
+            self.current_page -= 1
+            self.display_current_page()
+
+    def next_page(self):
+        per_page = self.get_per_page()
+        if (self.current_page * per_page) < len(self.repos_all):
+            self.current_page += 1
+            self.display_current_page()
 
     def update_selection(self):
         self.selected_repos = []
