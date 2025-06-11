@@ -1,4 +1,3 @@
-# main_window.py
 import sys
 import os
 from PySide6.QtWidgets import (
@@ -29,15 +28,15 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("GitHub Repo Downloader")
         self.setGeometry(100, 100, 800, 600)
         self.token = None
-        self.repos_all = []  # Все загруженные репозитории
-        self.current_page = 1  # Текущая страница
-        self.per_page = 100  # Репозиториев на страницу
+        self.repos_all = []
+        self.current_page = 1
+        self.per_page = 100
         self.selected_repos = []
         self.setup_ui()
         self.load_stylesheet()
         self.clone_workers = []
         self.repo_worker = None
-        self.cached_pages = {}  # Кеш загруженных страниц
+        self.cached_pages = {}
         self.total_pages = 1
         self.current_search_params = None
 
@@ -53,30 +52,25 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(self.central_widget)
         self.layout = QVBoxLayout()
 
-        # Выбор режима поиска
         self.mode_combo = QComboBox()
         self.mode_combo.addItems(["Search by Language", "Search by User"])
         self.layout.addWidget(self.mode_combo)
 
-        # Параметры поиска
         self.param_layout = QVBoxLayout()
         self.language_input = QLineEdit(placeholderText="Language (e.g. Python)")
         self.sort_combo = QComboBox()
         self.sort_combo.addItems(["stars", "forks", "updated"])
         self.order_combo = QComboBox()
         self.order_combo.addItems(["desc", "asc"])
-        self.per_page_input = QLineEdit("50")  # По умолчанию 50
+        self.per_page_input = QLineEdit("50")
         self.username_input = QLineEdit(placeholderText="GitHub username")
 
-        # Токен
         self.token_input = QLineEdit(placeholderText="GitHub token (optional)")
         self.token_input.setEchoMode(QLineEdit.Password)
 
-        # Кнопка поиска
         self.search_btn = QPushButton("Search")
         self.search_btn.clicked.connect(self.start_search)
 
-        # Навигация
         nav_layout = QHBoxLayout()
         self.prev_btn = QPushButton("Назад")
         self.next_btn = QPushButton("Вперёд")
@@ -87,27 +81,22 @@ class MainWindow(QMainWindow):
         nav_layout.addWidget(self.prev_btn)
         nav_layout.addWidget(self.next_btn)
 
-        # Страница и список
         self.page_label = QLabel("Страница 1 из 1")
         self.result_list = QListWidget()
         self.result_list.itemChanged.connect(self.update_selection)
 
-        # Клонирование
         self.clone_btn = QPushButton("Clone Selected")
         self.clone_btn.setEnabled(False)
         self.clone_btn.clicked.connect(self.start_cloning)
 
-        # Прогресс бар
         self.progress_bar = QProgressBar()
         self.progress_bar.setVisible(False)
 
-        # Кнопки выбора всех репозиториев
         self.select_all_current_btn = QPushButton("Select All on Current Page")
         self.select_all_loaded_btn = QPushButton("Select All on Loaded Pages")
         self.select_all_current_btn.clicked.connect(self.select_all_current)
         self.select_all_loaded_btn.clicked.connect(self.select_all_loaded)
 
-        # Добавляем всё на форму
         self.layout.addLayout(self.param_layout)
         self.layout.addWidget(self.token_input)
         self.layout.addWidget(self.search_btn)
@@ -120,7 +109,6 @@ class MainWindow(QMainWindow):
         self.layout.addWidget(self.progress_bar)
         self.central_widget.setLayout(self.layout)
 
-        # Обновление интерфейса
         self.mode_combo.currentIndexChanged.connect(self.update_params_ui)
         self.update_params_ui()
 
@@ -142,18 +130,17 @@ class MainWindow(QMainWindow):
 
     def start_search(self):
         if self.repo_worker and self.repo_worker.isRunning():
-            return  # Блокируем повторный запуск
+            return
 
         self.token = self.token_input.text() or None
         self.result_list.clear()
         self.current_page = 1
-        self.cached_pages = {}  # Сбрасываем кеш
+        self.cached_pages = {}
         self.total_pages = 1
 
         self.search_btn.setText("Поиск...")
         self.search_btn.setEnabled(False)
 
-        # Формируем параметры текущего поиска
         if self.mode_combo.currentIndex() == 0:
             search_params = {
                 "type": "language",
@@ -173,18 +160,15 @@ class MainWindow(QMainWindow):
         self.load_page(self.current_page)
 
     def load_page(self, page):
-        # Если страница уже загружена - используем кеш
         if page in self.cached_pages:
             self.display_page(page)
             return
 
-        # Формируем параметры запроса
         per_page = self.get_per_page()
         params = self.current_search_params.copy()
         params["page"] = page
         params["per_page"] = per_page
 
-        # Создаем воркер для загрузки страницы
         if params["type"] == "language":
             self.repo_worker = RepoWorker(
                 "language",
@@ -205,30 +189,25 @@ class MainWindow(QMainWindow):
             )
 
         def on_finished(repos):
-            # Кешируем результат
             self.cached_pages[page] = repos
             self.display_page(page)
             self.repo_worker = None
             self.search_btn.setText("Search")
             self.search_btn.setEnabled(True)
 
-            # Обновляем общее количество страниц
             if repos:
-                # Для поиска по языку GitHub возвращает общее количество результатов
                 if params["type"] == "language" and hasattr(
                     self.repo_worker, "total_count"
                 ):
                     total_repos = self.repo_worker.total_count
                     self.total_pages = (total_repos + per_page - 1) // per_page
-                # Для пользователя мы не знаем общее количество
                 else:
-                    # Если загрузили меньше чем запросили - это последняя страница
                     if len(repos) < per_page:
                         self.total_pages = page
                     else:
                         self.total_pages = (
                             page + 1
-                        )  # Предполагаем, что есть следующая страница
+                        )
                         self.next_btn.setEnabled(True)
 
             else:
@@ -252,7 +231,7 @@ class MainWindow(QMainWindow):
         try:
             return int(self.per_page_input.text())
         except:
-            return 50  # Значение по умолчанию
+            return 50
 
     def display_page(self, page):
         self.result_list.clear()
@@ -260,19 +239,35 @@ class MainWindow(QMainWindow):
         self.next_btn.setEnabled(page < self.total_pages)
         repos = self.cached_pages.get(page, [])
         for repo in repos:
-            if "selected" not in repo:
-                repo["selected"] = False
+            is_selected = repo.get("selected", False)
             item_widget = RepoListItem(repo)
+            item_widget.setChecked(is_selected)
             list_item = QListWidgetItem()
             list_item.setSizeHint(item_widget.sizeHint())
 
-            # Подключаем сигнал из RepoListItem к update_selection
             item_widget.stateChanged.connect(self.update_selection)
 
             self.result_list.addItem(list_item)
             self.result_list.setItemWidget(list_item, item_widget)
+            item_widget.stateChanged.connect(self.update_selection)
+
+    def save_current_page_state(self):
+        if self.current_page not in self.cached_pages:
+            return
+            
+        # Получаем список репозиториев текущей страницы
+        current_repos = self.cached_pages[self.current_page]
+        
+        # Проходим по всем виджетам в списке
+        for i in range(self.result_list.count()):
+            item = self.result_list.item(i)
+            widget = self.result_list.itemWidget(item)
+            if widget and i < len(current_repos):
+                # Сохраняем состояние чекбокса
+                current_repos[i]["selected"] = widget.isChecked()
 
     def prev_page(self):
+        self.save_current_page_state()
         if self.current_page > 1:
             self.current_page -= 1
             self.load_page(self.current_page)
@@ -281,6 +276,7 @@ class MainWindow(QMainWindow):
             )
 
     def next_page(self):
+        self.save_current_page_state()
         if self.current_page < self.total_pages:
             self.current_page += 1
             self.load_page(self.current_page)
@@ -289,20 +285,36 @@ class MainWindow(QMainWindow):
             )
 
     def select_all_current(self):
-        # Получаем текущую страницу из кэша
         current_repos = self.cached_pages.get(self.current_page, [])
+
+        if not current_repos:
+            return
+
+        all_selected = all(repo.get("selected", False) for repo in current_repos)
+
         for repo in current_repos:
-            repo["selected"] = True
-        # Обновляем интерфейс
+            repo["selected"] = not all_selected
+
         self.display_page(self.current_page)
         self.update_selection()
 
     def select_all_loaded(self):
-        # Устанавливаем "selected" для всех репозиториев во всех загруженных страницах
-        for page in self.cached_pages:
-            for repo in self.cached_pages[page]:
-                repo["selected"] = True
-        # Обновляем интерфейс
+        if not self.cached_pages:
+            return
+
+        all_selected = True
+        for page in self.cached_pages.values():
+            for repo in page:
+                if not repo.get("selected", False):
+                    all_selected = False
+                    break
+            if not all_selected:
+                break
+
+        for page in self.cached_pages.values():
+            for repo in page:
+                repo["selected"] = not all_selected
+
         self.display_page(self.current_page)
         self.update_selection()
 
@@ -315,9 +327,10 @@ class MainWindow(QMainWindow):
                 repo_info = item_widget.repo_info
                 repo_info["branch"] = item_widget.getSelectedBranch()
                 self.selected_repos.append(repo_info)
+            else:
+                repo_info = item_widget.repo_info
+                repo_info["selected"] = False
         self.clone_btn.setEnabled(len(self.selected_repos) > 0)
-
-
 
     def start_cloning(self):
         self.selected_repos = []
